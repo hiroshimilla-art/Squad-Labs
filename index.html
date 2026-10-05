@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SquatLab - Análisis bioinstrumental de la sentadilla</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--tx:#e2e8f0;--mut:#94a3b8;--ac:#38bdf8}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header,main{max-width:1100px;margin:auto;padding:16px}
+h1{margin:0;font-size:22px}h2{margin:0 0 8px;font-size:16px}p.s{color:var(--mut);margin:4px 0 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border-radius:12px;padding:14px}
+
+/* Contenedor del video y canvas corregido */
+.stage{position:relative;margin:8px 0;width:100%;background:#000;border-radius:8px;overflow:hidden;display:flex;justify-content:center;align-items:center}
+video{width:100%;max-height:360px;display:block;object-fit:contain}
+#ov{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;object-fit:contain}
+
+button,label.b{background:var(--ac);color:#04243a;border:0;border-radius:8px;padding:8px 12px;font-weight:600;cursor:pointer;display:inline-block;margin:3px 3px 3px 0;font-size:14px}
+.g{background:#334155!important;color:var(--tx)!important}button:disabled{opacity:.45;cursor:default}
+input[type=file]{display:none}.row{display:flex;align-items:center;gap:8px;margin:6px 0;flex-wrap:wrap}.row span{min-width:150px;color:var(--mut)}
+select{background:#0b1220;color:var(--tx);border:1px solid #334155;border-radius:6px;padding:4px}
+#ch{width:100%;height:260px;background:#0b1220;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:5px 6px;border-bottom:1px solid #334155;text-align:left}th{color:var(--mut);font-weight:500}
+.kk{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}.kk div{background:#0b1220;border-radius:8px;padding:8px}.kk small{color:var(--mut);display:block}.k{font-size:22px;font-weight:700;color:var(--ac)}
+#st{color:var(--mut);margin:6px 0;min-height:20px}#interp{margin:8px 0;padding:8px;border-left:3px solid var(--ac);background:#0b1220;font-size:13px}
+details{margin-top:8px;color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+<h1>SquatLab · Análisis bioinstrumental de la sentadilla</h1>
+<p class="s">Problema: profundidad insuficiente durante la sentadilla en rehabilitación de rodilla. Variable: ángulo de flexión de rodilla (cadera-rodilla-tobillo).</p>
+</header>
+<main class="grid">
+<section class="card">
+<h2>1. Entrada de datos</h2>
+<label class="b">Cargar video<input id="fv" type="file" accept="video/*"></label>
+<label class="b g">Cargar CSV (t, ángulo)<input id="fc" type="file" accept=".csv,text/csv"></label>
+<button class="g" id="demo">Datos de demostración</button>
+<div class="stage">
+  <video id="v" playsinline muted controls></video>
+  <canvas id="ov"></canvas>
+</div>
+<div class="row">
+  <button id="go">Analizar video</button>
+  <button id="stop" class="g" disabled>Detener</button>
+  <select id="rate">
+    <option value="0.5">Velocidad 0.5x (más preciso)</option>
+    <option value="1">Velocidad 1x</option>
+  </select>
+</div>
+<h2 style="margin-top:12px">2. Parámetros</h2>
+<div class="row"><span>Lado analizado</span><select id="side"><option value="L">Izquierda</option><option value="R">Derecha</option></select></div>
+<div class="row"><span>Suavizado: <b id="smv">5</b> cuadros</span><input id="sm" type="range" min="1" max="15" step="2" value="5"></div>
+<div class="row"><span>Umbral descenso: <b id="dnv">130</b>°</span><input id="dn" type="range" min="80" max="150" value="130"></div>
+<div class="row"><span>Umbral ascenso: <b id="upv">160</b>°</span><input id="up" type="range" min="140" max="178" value="160"></div>
+<div id="st">Cargue un video, un CSV o use los datos de demostración.</div>
+<details><summary>Recomendaciones de registro</summary>Cámara fija a 2-3 m, altura de cadera, vista lateral (plano sagital) con la pierna a analizar hacia la cámara, cuerpo completo visible, buena luz. El ángulo es una proyección 2D: es un valor aproximado, no goniometría 3D. CSV: columnas tiempo (s) y ángulo de rodilla (°).</details>
+</section>
+<section class="card">
+<h2>3. Resultados</h2>
+<div class="kk"><div><small>Repeticiones</small><span class="k" id="kr">-</span></div><div><small>Ángulo mínimo medio</small><span class="k" id="kd">-</span></div><div><small>Rango de movimiento medio</small><span class="k" id="ka">-</span></div></div>
+<canvas id="ch"></canvas>
+<table><thead><tr><th>Rep</th><th>Prof. (°)</th><th>Descenso (s)</th><th>Ascenso (s)</th><th>Vel. desc. (°/s)</th><th>Rango (°)</th></tr></thead><tbody id="tb"></tbody></table>
+<div id="interp" hidden></div>
+<div class="row"><button id="dl" class="g" disabled>Descargar CSV procesado</button></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const vid=$('v'),ov=$('ov'),oc=ov.getContext('2d');
+let lm=null,MP=null,data=[],running=false,lastTs=0,out=null;
+const st=m=>$('st').textContent=m;
+const setB=()=>{$('go').disabled=running;$('stop').disabled=!running};
+
+/* ---------- Modelo de pose (MediaPipe) ---------- */
+async function initPose(){
+  if(lm)return;
+  st('Cargando modelo de pose (primera vez, ~10 s)...');
+  const V='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+  MP=await import(V+'/vision_bundle.mjs');
+  const fs=await MP.FilesetResolver.forVisionTasks(V+'/wasm');
+  lm=await MP.PoseLandmarker.createFromOptions(fs,{baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task'},runningMode:'VIDEO',numPoses:1});
+}
+
+/* ---------- Cinemática ---------- */
+function ang(a,b,c){
+  const u=[a.x-b.x,a.y-b.y],w=[c.x-b.x,c.y-b.y],m=Math.hypot(...u)*Math.hypot(...w);
+  return m?Math.acos(Math.max(-1,Math.min(1,(u[0]*w[0]+u[1]*w[1])/m)))*180/Math.PI:NaN
+}
+function knee(p,h,k,a,W,H){
+  if(!p[h]||!p[k]||!p[a]) return NaN;
+  if(Math.min(p[h].visibility||1,p[k].visibility||1,p[a].visibility||1)<.4)return NaN;
+  const P=i=>({x:p[i].x*W,y:p[i].y*H});return ang(P(h),P(k),P(a))
+}
+
+/* ---------- Dibujado sobre Canvas en tiempo real ---------- */
+function draw(p){
+  oc.clearRect(0,0,ov.width,ov.height);
+  if(!p)return;
+
+  const W = ov.width;
+  const H = ov.height;
+  const selectedSide = $('side') ?$('side').value : 'L';
+  const dnVal = +$('dn').value || 130;
+  const fontSize = Math.max(13, Math.round(W / 38));
+
+  const legs = [
+    { side: 'L', h: 23, k: 25, a: 27, label: 'Izq' },
+    { side: 'R', h: 24, k: 26, a: 28, label: 'Der' }
+  ];
+
+  let selectedAngle = null;
+
+  legs.forEach(leg => {
+    const { side, h, k, a } = leg;
+    if (!p[h] || !p[k] || !p[a]) return;
+    const visH = p[h].visibility ?? 1;
+    const visK = p[k].visibility ?? 1;
+    const visA = p[a].visibility ?? 1;
+    if (Math.min(visH, visK, visA) < 0.35) return;
+
+    const hip = { x: p[h].x * W, y: p[h].y * H };
+    const kneePt = { x: p[k].x * W, y: p[k].y * H };
+    const ankle = { x: p[a].x * W, y: p[a].y * H };
+
+    const angleDeg = ang(hip, kneePt, ankle);
+    if (isNaN(angleDeg)) return;
+
+    const isSelected = (side === selectedSide);
+    if (isSelected) selectedAngle = angleDeg;
+
+    // Código de colores según la profundidad de la sentadilla
+    let color = '#22c55e'; // Extensión (Verde)
+    if (angleDeg <= 95) {
+      color = '#ef4444'; // Sentadilla Profunda (Rojo intenso)
+    } else if (angleDeg <= dnVal) {
+      color = '#f59e0b'; // Flexión / Descenso (Naranja)
+    }
+
+    const alpha = isSelected ? 1.0 : 0.3;
+    const lineW = isSelected ? Math.max(4, W / 140) : Math.max(2, W / 280);
+
+    oc.save();
+    oc.globalAlpha = alpha;
+
+    // 1. Dibujar segmentos (Cadera - Rodilla - Tobillo)
+    oc.strokeStyle = color;
+    oc.lineWidth = lineW;
+    oc.lineCap = 'round';
+    oc.lineJoin = 'round';
+    oc.beginPath();
+    oc.moveTo(hip.x, hip.y);
+    oc.lineTo(kneePt.x, kneePt.y);
+    oc.lineTo(ankle.x, ankle.y);
+    oc.stroke();
+
+    // 2. Dibujar puntos articulaciones
+    [hip, kneePt, ankle].forEach((pt, idx) => {
+      oc.beginPath();
+      // Destacar la rodilla en sentadilla profunda
+      const r = (idx === 1 && angleDeg <= 95) ? lineW * 2.2 : lineW * 1.5;
+      oc.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+      oc.fillStyle = color;
+      oc.fill();
+      oc.strokeStyle = '#ffffff';
+      oc.lineWidth = 1.8;
+      oc.stroke();
+    });
+
+    // 3. Dibujar Arco Angular en la Rodilla
+    let a1 = Math.atan2(hip.y - kneePt.y, hip.x - kneePt.x);
+    let a2 = Math.atan2(ankle.y - kneePt.y, ankle.x - kneePt.x);
+    let diff = a2 - a1;
+    while (diff < -Math.PI) diff += 2 * Math.PI;
+    while (diff > Math.PI) diff -= 2 * Math.PI;
+
+    const arcRadius = Math.max(26, W / 22);
+    const endAngle = a1 + diff;
+    const anticlockwise = diff < 0;
+
+    // Relleno semi-transparente del sector angular
+    oc.beginPath();
+    oc.moveTo(kneePt.x, kneePt.y);
+    oc.arc(kneePt.x, kneePt.y, arcRadius, a1, endAngle, anticlockwise);
+    oc.closePath();
+    oc.fillStyle = color + '38'; // ~22% opacidad
+    oc.fill();
+
+    // Línea del arco
+    oc.beginPath();
+    oc.arc(kneePt.x, kneePt.y, arcRadius, a1, endAngle, anticlockwise);
+    oc.strokeStyle = color;
+    oc.lineWidth = isSelected ? Math.max(2.5, lineW * 0.7) : 1.5;
+    oc.stroke();
+
+    // 4. Etiqueta flotante con el valor exacto del ángulo
+    if (isSelected) {
+      const angleText = `${Math.round(angleDeg)}°`;
+      oc.font = `bold ${fontSize}px system-ui, -apple-system, sans-serif`;
+
+      const midAngle = a1 + diff / 2;
+      const labelDist = arcRadius + 22;
+      const lx = kneePt.x + Math.cos(midAngle) * labelDist;
+      const ly = kneePt.y + Math.sin(midAngle) * labelDist;
+
+      oc.textAlign = 'center';
+      oc.textBaseline = 'middle';
+      const tm = oc.measureText(angleText);
+      const padX = 7, padY = 4;
+      const boxW = tm.width + padX * 2;
+      const boxH = fontSize + padY * 2;
+
+      // Caja flotante para el texto
+      oc.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      oc.strokeStyle = color;
+      oc.lineWidth = 2;
+
+      oc.beginPath();
+      if (oc.roundRect) {
+        oc.roundRect(lx - boxW / 2, ly - boxH / 2, boxW, boxH, 6);
+      } else {
+        oc.rect(lx - boxW / 2, ly - boxH / 2, boxW, boxH);
+      }
+      oc.fill();
+      oc.stroke();
+
+      // Valor numérico
+      oc.fillStyle = '#ffffff';
+      oc.fillText(angleText, lx, ly);
+    }
+
+    oc.restore();
+  });
+
+  // 5. HUD Superior en Vivo (Panel informativo dinámico)
